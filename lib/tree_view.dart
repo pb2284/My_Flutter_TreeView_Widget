@@ -7,8 +7,7 @@ typedef TreeNodeTileBuilder = Widget Function(BuildContext,TreeNode);
 /// A TreeNode stores properties of a category in a TreeView.
 /// It holds a reference to its parent, if there is one.
 /// It contains a list of children.
-class TreeNode {
-
+class TreeNode with ChangeNotifier {
   final String name;
   final TreeNodeTileBuilder tileBuilder;
 
@@ -18,14 +17,14 @@ class TreeNode {
   List<TreeNode> _children = [];
   int _nodeDepth = 0;
 
-  TreeNode(this.name, this.tileBuilder, {this.expanded = false});
+  TreeNode(this.name, {this.tileBuilder, this.expanded = false});
 
   List<TreeNode> get children => _children;
 
   int get depth => _nodeDepth;
   set _depth(int newDepth) {
     _nodeDepth = newDepth;
-    _updateChildDepths(newDepth+1);
+    _updateChildDepths(newDepth + 1);
   }
 
   TreeNode get parent => _parentNode;
@@ -38,12 +37,19 @@ class TreeNode {
   void addChild(TreeNode child) {
     child._parent = this;
     _children.add(child);
+    notifyListeners();
   }
+
+  TreeNode getChildByName(String name)
+  => _children.firstWhere((child)=>child.name==name, orElse: ()=>null);
+
   void removeChild(TreeNode child) {
     _children.remove(child);
+    notifyListeners();
   }
+
   int get howManyChildren => _children.length;
-  bool get hasChildren => _children.length>0;
+  bool get hasChildren => _children.length > 0;
 
   void _updateChildDepths(int childDepth) {
     for(TreeNode child in _children)
@@ -56,6 +62,7 @@ class TreeNode {
       names.add(node.name);
     return names;
   }
+
 }
 
 /// A container class for TreeNodes
@@ -68,8 +75,6 @@ class Forest with ChangeNotifier {
     _forest = List.from(nodeList);
   }
 
-  List<TreeNode> get forest => _forest;
-
   int get numberOfTrees => _forest.length;
 
   TreeNode getRootNodeAt(int index) => _forest[index];
@@ -81,17 +86,25 @@ class Forest with ChangeNotifier {
     return names;
   }
 
+  TreeNode getRootByName(String name) {
+    return _forest.firstWhere((node) => (node.name==name));
+  }
+
   void addRoot(TreeNode node) {
+    node.addListener(nodeChangedListener);
     _forest.add(node);
     notifyListeners();
   }
 
   void removeRoot(TreeNode root) {
-    if(!_forest.contains(root))
-      return;
+    if (!_forest.contains(root)) return;
+    root.removeListener(nodeChangedListener);
     _forest.remove(root);
     notifyListeners();
   }
+
+  void nodeChangedListener() => notifyListeners();
+
 }
 
 /// A TreeView widget.
@@ -104,19 +117,27 @@ class Forest with ChangeNotifier {
 ///   inside a box filled with one of the colours. Colours are selected by
 ///   nested depth % number of colours provided.
 ///   * categoryBorder can be used to provide a border around the box for each level
+///   * the icons for expanding and collapsing tiles can be set by specifying
+///   expandIcon and collapseIcon,
 ///   * finally, the user supplies a TreeNodeTileBuilder callback with each
 ///   TreeNode. This builder is used to construct the content of the tile.
 class TreeView extends StatefulWidget {
-  final List<TreeNode> roots;
+  final Forest forest;
   final double indentPerLevel;
   final List<Color> tileColours;
   final Border categoryBorder;
+  final TreeNodeTileBuilder builder;
+  final Icon expandIcon;
+  final Icon collapseIcon;
 
-  const TreeView(this.roots,
+  const TreeView(this.forest,
       {Key key,
-        this.indentPerLevel = 25.0,
-        this.tileColours,
-        this.categoryBorder})
+      this.builder,
+      this.indentPerLevel = 25.0,
+      this.tileColours,
+      this.categoryBorder,
+        this.expandIcon,
+        this.collapseIcon})
       : super(key: key);
 
   @override
@@ -124,15 +145,14 @@ class TreeView extends StatefulWidget {
 }
 
 class _TreeViewState extends State<TreeView> {
-
   @override
   Widget build(BuildContext context) {
 
     return ListView.builder(
         shrinkWrap: true,
-        itemCount: widget.roots.length,
+        itemCount: widget.forest.numberOfTrees,
         itemBuilder: (BuildContext context, int index) {
-          TreeNode root = widget.roots[index];
+          TreeNode root = widget.forest.getRootNodeAt(index);
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,7 +179,6 @@ class _TreeViewState extends State<TreeView> {
         children.addAll(_buildTree(node.getChildAt(index)));
       }
     }
-    BorderSide borderSide = BorderSide(color: Colors.grey, width: 1.0);
     colour = widget.tileColours == null
         ? null
         : widget.tileColours[(node.depth + 1) % widget.tileColours.length];
@@ -185,26 +204,30 @@ class _TreeViewState extends State<TreeView> {
   }
 
   Widget _buildNodeTile(TreeNode node) {
-    Icon expansionIcon =
-    Icon(node.expanded ? Icons.expand_less : Icons.expand_more);
+    Icon expansionIcon = node.expanded
+        ? widget.collapseIcon?? Icon(Icons.expand_less)
+        : widget.expandIcon?? Icon(Icons.expand_more);
+
     return ListTile(
       contentPadding: EdgeInsets.symmetric(horizontal: 5.0),
       leading: node.hasChildren
           ? IconButton(
-          icon: expansionIcon,
-          onPressed: () {
-            setState(() {
-              node.expanded = !node.expanded;
-            });
-          })
+              icon: expansionIcon,
+              onPressed: () {
+                setState(() {
+                  node.expanded = !node.expanded;
+                });
+              })
           : Container(
-        padding: EdgeInsets.only(left: 18.0, right: 6.0),
-        child: Icon(
-          Icons.subdirectory_arrow_right,
-          size: 22.0,
-        ),
-      ),
-      title: node.tileBuilder(this.context, node),
+              padding: EdgeInsets.only(left: 18.0, right: 6.0),
+              child: Icon(
+                Icons.subdirectory_arrow_right,
+                size: 22.0,
+              ),
+            ),
+      title: node.tileBuilder?.call(this.context, node) ??
+          widget.builder?.call(this.context, node) ??
+          Text(node.name),
     );
   }
 }
